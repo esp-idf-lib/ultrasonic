@@ -1,5 +1,9 @@
 # esp-idf-lib/ultrasonic
 
+[![Build examples](https://github.com/esp-idf-lib/ultrasonic/actions/workflows//build.yml/badge.svg)](https://github.com/esp-idf-lib/ultrasonic/actions/workflows//build.yml)
+[![Build docs](https://github.com/esp-idf-lib/ultrasonic/actions/workflows//build-docs.yml/badge.svg)](https://github.com/esp-idf-lib/ultrasonic/actions/workflows//build-docs.yml)
+[![Validation](https://github.com/esp-idf-lib/ultrasonic/actions/workflows//validate-component.yml/badge.svg)](https://github.com/esp-idf-lib/ultrasonic/actions/workflows//validate-component.yml)
+
 Driver for ultrasonic range meters, e.g. HC-SR04, HY-SRF05.
 
 * [Documentation](https://esp-idf-lib.github.io/ultrasonic/)
@@ -11,7 +15,7 @@ Driver for ultrasonic range meters, e.g. HC-SR04, HY-SRF05.
 ## Installation
 
 ```sh
-idf.py add-dependency esp-idf-lib/ultrasonic^1.0.0
+idf.py add-dependency esp-idf-lib/ultrasonic
 ```
 
 ## Support
