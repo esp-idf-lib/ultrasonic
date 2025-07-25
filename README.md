@@ -11,7 +11,7 @@ Driver for ultrasonic range meters, e.g. HC-SR04, HY-SRF05.
 ## Installation
 
 ```sh
-idf.py add-dependency "esp-idf-lib/ultrasonic^1.0.0
+idf.py add-dependency esp-idf-lib/ultrasonic^1.0.0
 ```
 
 ## Support
