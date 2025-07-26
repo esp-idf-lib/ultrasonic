@@ -1,5 +1,5 @@
 ---
-version: 1.0.2
+version: 1.0.3
 description: Driver for ultrasonic range meters, e.g. HC-SR04, HY-SRF05
 license: BSD-3
 targets:
