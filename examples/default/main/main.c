@@ -17,7 +17,8 @@
 
 void ultrasonic_test(void *pvParameters)
 {
-    ultrasonic_sensor_t sensor = {
+    ultrasonic_sensor_t sensor =
+    {
         .trigger_pin = TRIGGER_GPIO,
         .echo_pin = ECHO_GPIO
     };
