@@ -2,7 +2,6 @@ menu "Example configuration"
 
     config EXAMPLE_TRIGGER_GPIO
         int "Trigger GPIO number"
-        default 4 if IDF_TARGET_ESP8266
         default 4 if IDF_TARGET_ESP32C2 || IDF_TARGET_ESP32C3 || IDF_TARGET_ESP32C5 || IDF_TARGET_ESP32C6 || IDF_TARGET_ESP32C61
         default 4 if IDF_TARGET_ESP32H2
         default 4 if IDF_TARGET_ESP32P4
@@ -12,7 +11,7 @@ menu "Example configuration"
 
     config EXAMPLE_ECHO_GPIO
         int "Echo GPIO number"
-        default 5 if IDF_TARGET_ESP8266 || IDF_TARGET_ESP32C3
+        default 5 if IDF_TARGET_ESP32C3
         default 5 if IDF_TARGET_ESP32C2 || IDF_TARGET_ESP32C3 || IDF_TARGET_ESP32C5 || IDF_TARGET_ESP32C6 || IDF_TARGET_ESP32C61
         default 5 if IDF_TARGET_ESP32H2
         default 5 if IDF_TARGET_ESP32P4
