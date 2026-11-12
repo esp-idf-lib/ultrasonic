@@ -54,6 +54,13 @@
 #define SPEED_OF_SOUND_AT_0C_MM_S        331300
 #define SPEED_OF_SOUND_PER_C_MM_S        606
 
+#if !CONFIG_FREERTOS_USE_TIMERS
+// FreeRTOS timers are disabled, so the driver runs the callbacks by itself
+#define NOTIFY_QUEUE_LENGTH              8
+#define NOTIFY_TASK_STACK                3072
+#define NOTIFY_TASK_PRIORITY             5
+#endif
+
 static const char *TAG = "ultrasonic";
 
 // The trigger line is shared by a group, and two groups on one line would
@@ -112,6 +119,9 @@ typedef struct
     int64_t echo_start_us;
 
     ultrasonic_result_t result;
+
+    // Set when the callback is queued, cleared when it has been called
+    volatile bool notify_pending;
 } ultrasonic_sensor_impl_t;
 
 typedef struct
@@ -124,6 +134,14 @@ typedef struct
     ultrasonic_sensor_impl_t **sensors;
     size_t count;
     size_t capacity;
+
+#if !CONFIG_FREERTOS_USE_TIMERS
+    // Used only when FreeRTOS timers are disabled: the callbacks are run by a
+    // task of the driver instead of the timer service task
+    QueueHandle_t notify_queue;
+    TaskHandle_t notify_task;
+    volatile bool notify_exited;
+#endif
 } ultrasonic_group_impl_t;
 
 /**
@@ -153,37 +171,46 @@ static void convert_distance(ultrasonic_result_t *res, bool compensation, int16_
 }
 
 /**
- * Runs in the FreeRTOS timer service task: the ISR and the esp_timer callback
- * only pend this function, so the user callback never runs in an ISR.
+ * Calls the user callback, never from an ISR: the ISR and the esp_timer
+ * callback only schedule this function, either in the FreeRTOS timer service
+ * task or, when FreeRTOS timers are disabled, in the task of the driver.
  */
 static void notify_done(void *arg1, uint32_t arg2)
 {
     ultrasonic_sensor_impl_t *sensor = arg1;
     (void)arg2;
 
-    if (!sensor->done_cb)
-        return;
+    if (sensor->done_cb)
+    {
+        portENTER_CRITICAL(&sensor->mux);
+        ultrasonic_result_t res = sensor->result;
+        bool compensation = sensor->temperature_compensation;
+        int16_t temperature_c = sensor->ambient_temperature_c;
+        portEXIT_CRITICAL(&sensor->mux);
 
-    portENTER_CRITICAL(&sensor->mux);
-    ultrasonic_result_t res = sensor->result;
-    bool compensation = sensor->temperature_compensation;
-    int16_t temperature_c = sensor->ambient_temperature_c;
-    portEXIT_CRITICAL(&sensor->mux);
+        if (res.status == ESP_OK)
+            convert_distance(&res, compensation, temperature_c);
 
-    if (res.status == ESP_OK)
-        convert_distance(&res, compensation, temperature_c);
+        sensor->done_cb(sensor, &res, sensor->user_ctx);
+    }
 
-    sensor->done_cb(sensor, &res, sensor->user_ctx);
+    sensor->notify_pending = false;
 }
 
-#if INCLUDE_xTimerPendFunctionCall
+#if CONFIG_FREERTOS_USE_TIMERS
+
 static void pend_notify_from_isr(ultrasonic_sensor_impl_t *sensor, BaseType_t *woken)
 {
     if (!sensor->done_cb)
         return;
+
+    sensor->notify_pending = true;
 
     if (xTimerPendFunctionCallFromISR(notify_done, sensor, 0, woken) != pdPASS)
+    {
+        sensor->notify_pending = false;
         ESP_EARLY_LOGW(TAG, "Timer queue is full, the callback is lost");
+    }
 }
 
 static void pend_notify(ultrasonic_sensor_impl_t *sensor)
@@ -191,21 +218,135 @@ static void pend_notify(ultrasonic_sensor_impl_t *sensor)
     if (!sensor->done_cb)
         return;
 
+    sensor->notify_pending = true;
+
     if (xTimerPendFunctionCall(notify_done, sensor, 0, 0) != pdPASS)
+    {
+        sensor->notify_pending = false;
         ESP_LOGW(TAG, "Timer queue is full, the callback is lost");
+    }
 }
+
+static esp_err_t notify_init(ultrasonic_group_impl_t *group)
+{
+    (void)group;
+    return ESP_OK;
+}
+
+static void notify_delete(ultrasonic_group_impl_t *group)
+{
+    (void)group;
+}
+
 #else
+
+static void notify_task(void *arg)
+{
+    ultrasonic_group_impl_t *group = arg;
+
+    while (1)
+    {
+        ultrasonic_sensor_impl_t *sensor = NULL;
+        if (xQueueReceive(group->notify_queue, &sensor, portMAX_DELAY) != pdTRUE || !sensor)
+            break;
+
+        notify_done(sensor, 0);
+    }
+
+    group->notify_exited = true;
+    vTaskDelete(NULL);
+}
+
 static void pend_notify_from_isr(ultrasonic_sensor_impl_t *sensor, BaseType_t *woken)
 {
-    (void)sensor;
-    (void)woken;
+    if (!sensor->done_cb)
+        return;
+
+    ultrasonic_group_impl_t *group = sensor->group;
+
+    sensor->notify_pending = true;
+
+    if (xQueueSendFromISR(group->notify_queue, &sensor, woken) != pdTRUE)
+    {
+        sensor->notify_pending = false;
+        ESP_EARLY_LOGW(TAG, "Notification queue is full, the callback is lost");
+    }
 }
 
 static void pend_notify(ultrasonic_sensor_impl_t *sensor)
 {
-    (void)sensor;
+    if (!sensor->done_cb)
+        return;
+
+    ultrasonic_group_impl_t *group = sensor->group;
+
+    sensor->notify_pending = true;
+
+    if (xQueueSend(group->notify_queue, &sensor, 0) != pdTRUE)
+    {
+        sensor->notify_pending = false;
+        ESP_LOGW(TAG, "Notification queue is full, the callback is lost");
+    }
 }
+
+static esp_err_t notify_init(ultrasonic_group_impl_t *group)
+{
+    group->notify_queue = xQueueCreate(NOTIFY_QUEUE_LENGTH, sizeof(ultrasonic_sensor_impl_t *));
+    if (!group->notify_queue)
+        return ESP_ERR_NO_MEM;
+
+    if (xTaskCreate(notify_task, "ultrasonic", NOTIFY_TASK_STACK, group, NOTIFY_TASK_PRIORITY,
+                    &group->notify_task) != pdPASS)
+    {
+        vQueueDelete(group->notify_queue);
+        group->notify_queue = NULL;
+        return ESP_ERR_NO_MEM;
+    }
+
+    return ESP_OK;
+}
+
+static void notify_delete(ultrasonic_group_impl_t *group)
+{
+    if (!group->notify_queue)
+        return;
+
+    // A NULL entry stops the task, all the entries queued before are delivered
+    ultrasonic_sensor_impl_t *sentinel = NULL;
+    xQueueSend(group->notify_queue, &sentinel, pdMS_TO_TICKS(100));
+
+    for (int i = 0; i < 100 && !group->notify_exited; i++)
+        vTaskDelay(1);
+
+    if (!group->notify_exited)
+        vTaskDelete(group->notify_task);
+
+    vQueueDelete(group->notify_queue);
+    group->notify_queue = NULL;
+}
+
 #endif
+
+/**
+ * The queued callback holds a pointer to the sensor, so it must be delivered
+ * before the sensor is freed
+ */
+static void notify_wait_idle(ultrasonic_group_impl_t *group)
+{
+    for (int attempt = 0; attempt < 100; attempt++)
+    {
+        bool pending = false;
+        for (size_t i = 0; i < group->count; i++)
+            pending = pending || group->sensors[i]->notify_pending;
+
+        if (!pending)
+            return;
+
+        vTaskDelay(1);
+    }
+
+    ESP_LOGW(TAG, "The measurement callback never finished");
+}
 
 /**
  * GPIO interrupt handler, called on both edges of the ECHO line.
@@ -371,6 +512,15 @@ esp_err_t ultrasonic_group_init(const ultrasonic_group_config_t *cfg, ultrasonic
     {
         free(group);
         res = ESP_ERR_NO_MEM;
+        goto fail_release;
+    }
+
+    res = notify_init(group);
+    if (res != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Could not start the notification task: %s", esp_err_to_name(res));
+        vSemaphoreDelete(group->mutex);
+        free(group);
         goto fail_release;
     }
 
@@ -541,6 +691,7 @@ esp_err_t ultrasonic_group_delete(ultrasonic_group_t group)
 
     if (xSemaphoreTake(g->mutex, portMAX_DELAY) == pdTRUE)
     {
+        // Stop every source of notifications first, then nothing new is queued
         for (size_t i = 0; i < g->count; i++)
         {
             ultrasonic_sensor_impl_t *sensor = g->sensors[i];
@@ -549,8 +700,15 @@ esp_err_t ultrasonic_group_delete(ultrasonic_group_t group)
             gpio_set_intr_type(sensor->echo_gpio, GPIO_INTR_DISABLE);
 
             esp_timer_stop(sensor->timeout);
-            delete_timer(sensor->timeout);
+        }
 
+        notify_wait_idle(g);
+
+        for (size_t i = 0; i < g->count; i++)
+        {
+            ultrasonic_sensor_impl_t *sensor = g->sensors[i];
+
+            delete_timer(sensor->timeout);
             vSemaphoreDelete(sensor->done);
             free(sensor);
         }
@@ -571,6 +729,7 @@ esp_err_t ultrasonic_group_delete(ultrasonic_group_t group)
     gpio_set_level(g->trigger_gpio, 0);
     gpio_reset_pin(g->trigger_gpio);
     trigger_release(g->trigger_gpio);
+    notify_delete(g);
     free(g);
     return ESP_OK;
 }

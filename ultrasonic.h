@@ -96,11 +96,12 @@ typedef struct
  * @brief Measurement completion callback
  *
  * Called when a measurement finishes: the echo arrived, the deadline expired,
- * or the measurement was canceled. Runs in the FreeRTOS timer service task, so
+ * or the measurement was canceled. Runs in a task, never in an interrupt, so
  * ordinary FreeRTOS APIs may be used, but the callback should stay short.
  *
- * The result is valid only for the duration of the call. Callbacks require
- * `CONFIG_FREERTOS_USE_TIMERS`; without it only the polling API is available.
+ * With `CONFIG_FREERTOS_USE_TIMERS` the callback runs in the FreeRTOS timer
+ * service task, otherwise in the task the driver creates for the group. The
+ * result is valid only for the duration of the call.
  *
  * @param sensor Sensor handle
  * @param result Measurement result
