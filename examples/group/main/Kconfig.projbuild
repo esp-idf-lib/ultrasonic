@@ -1,0 +1,19 @@
+menu "Example configuration"
+
+    config EXAMPLE_TRIGGER_GPIO
+        int "TRIG GPIO (shared by both sensors)"
+        default 17
+
+    config EXAMPLE_ECHO_GPIO_1
+        int "ECHO GPIO of the first sensor"
+        default 16
+
+    config EXAMPLE_ECHO_GPIO_2
+        int "ECHO GPIO of the second sensor"
+        default 18
+
+    config EXAMPLE_MEASURE_INTERVAL_MS
+        int "Measurement interval, ms"
+        default 100
+
+endmenu

@@ -1,15 +1,15 @@
 ---
 name: ultrasonic
 description: Driver for ultrasonic range meters, e.g. HC-SR04, HY-SRF05
-version: 1.1.1
+version: 2.0.0
 groups:
   - misc
 code_owners: UncleRus
 depends:
   - driver
   - freertos
-  - esp_idf_lib_helpers
-thread_safe: no
+  - esp_timer
+thread_safe: yes
 license: BSD-3-Clause
 copyrights:
   - name: UncleRus

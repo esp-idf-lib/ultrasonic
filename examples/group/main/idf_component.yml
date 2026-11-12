@@ -1,0 +1,6 @@
+version: 1.0.0
+description: group
+dependencies:
+  esp-idf-lib/ultrasonic:
+    version: "*"
+    override_path: "../../../"

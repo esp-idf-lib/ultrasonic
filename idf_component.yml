@@ -1,10 +1,7 @@
 ---
-version: 1.1.1
+version: 2.0.0
 description: Driver for ultrasonic range meters, e.g. HC-SR04, HY-SRF05
 license: BSD-3-Clause
-dependencies:
-  esp-idf-lib/esp_idf_lib_helpers:
-    version: "*"
 url: https://github.com/esp-idf-lib/core
 repository: https://github.com/esp-idf-lib/ultrasonic
 documentation: https://esp-idf-lib.github.io/ultrasonic/
