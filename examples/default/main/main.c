@@ -1,61 +1,87 @@
+#include <inttypes.h>
 #include <stdio.h>
-#include <stdbool.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <freertos/semphr.h>
 #include <ultrasonic.h>
-#include <esp_err.h>
 
-#define MAX_DISTANCE_CM 500 // 5m max
+#define INTERVAL_MS CONFIG_EXAMPLE_MEASURE_INTERVAL_MS
 
-#if defined(CONFIG_IDF_TARGET_ESP8266)
-#define TRIGGER_GPIO 4
-#define ECHO_GPIO 5
-#else
-#define TRIGGER_GPIO 17
-#define ECHO_GPIO 16
-#endif
+static SemaphoreHandle_t result_mutex;
+static ultrasonic_result_t last_result;
+static bool result_ready;
 
-void ultrasonic_test(void *pvParameters)
+static const char *result_name(esp_err_t err)
 {
-    ultrasonic_sensor_t sensor =
+    switch (err)
     {
-        .trigger_pin = TRIGGER_GPIO,
-        .echo_pin = ECHO_GPIO
-    };
-
-    ultrasonic_init(&sensor);
-
-    while (true)
-    {
-        float distance;
-        esp_err_t res = ultrasonic_measure(&sensor, MAX_DISTANCE_CM, &distance);
-        if (res != ESP_OK)
-        {
-            printf("Error %d: ", res);
-            switch (res)
-            {
-                case ESP_ERR_ULTRASONIC_PING:
-                    printf("Cannot ping (device is in invalid state)\n");
-                    break;
-                case ESP_ERR_ULTRASONIC_PING_TIMEOUT:
-                    printf("Ping timeout (no device found)\n");
-                    break;
-                case ESP_ERR_ULTRASONIC_ECHO_TIMEOUT:
-                    printf("Echo timeout (i.e. distance too big)\n");
-                    break;
-                default:
-                    printf("%s\n", esp_err_to_name(res));
-            }
-        }
-        else
-            printf("Distance: %0.04f m\n", distance);
-
-        vTaskDelay(pdMS_TO_TICKS(500));
+        case ESP_ERR_ULTRASONIC_NO_ECHO:
+            return "no echo";
+        case ESP_ERR_ULTRASONIC_BUSY:
+            return "busy";
+        case ESP_ERR_ULTRASONIC_EMPTY:
+            return "no result";
+        case ESP_ERR_ULTRASONIC_CANCELED:
+            return "canceled";
+        default:
+            return esp_err_to_name(err);
     }
 }
 
-void app_main()
+static void on_measurement(ultrasonic_sensor_t sensor, const ultrasonic_result_t *result, void *user_ctx)
 {
-    xTaskCreate(ultrasonic_test, "ultrasonic_test", configMINIMAL_STACK_SIZE * 3, NULL, 5, NULL);
+    (void)sensor;
+    (void)user_ctx;
+
+    if (xSemaphoreTake(result_mutex, 0) != pdTRUE)
+        return;
+
+    last_result = *result;
+    result_ready = true;
+    xSemaphoreGive(result_mutex);
 }
 
+void app_main(void)
+{
+    result_mutex = xSemaphoreCreateMutex();
+    configASSERT(result_mutex);
+
+    ultrasonic_config_t cfg =
+    {
+        .group = {
+            .trigger_gpio = CONFIG_EXAMPLE_TRIGGER_GPIO,
+        },
+        .sensor = {
+            .echo_gpio = CONFIG_EXAMPLE_ECHO_GPIO,
+            .max_echo_us = 38000,
+            .done_cb = on_measurement,
+        },
+    };
+
+    ultrasonic_sensor_t sensor;
+    ESP_ERROR_CHECK(ultrasonic_init(&cfg, &sensor));
+
+    while (1)
+    {
+        if (!ultrasonic_is_busy(sensor))
+            ESP_ERROR_CHECK(ultrasonic_start(sensor));
+
+        ultrasonic_result_t res;
+        if (xSemaphoreTake(result_mutex, portMAX_DELAY) == pdTRUE)
+        {
+            if (result_ready)
+            {
+                res = last_result;
+                result_ready = false;
+                if (res.status == ESP_OK)
+                    printf("Distance: %" PRIu32 " mm (%.3f m), echo %" PRIu32 " us\n",
+                           res.distance_mm, res.distance_m, res.echo_us);
+                else
+                    printf("Measurement failed: %s\n", result_name(res.status));
+            }
+            xSemaphoreGive(result_mutex);
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(INTERVAL_MS));
+    }
+}

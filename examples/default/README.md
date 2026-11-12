@@ -2,12 +2,20 @@
 
 ## What it does
 
-It measures and shows distance to an obstacle in loop.
-This example is compatible with any ultrasonic module with `TRIGGER` and `ECHO` pins.
+Measures the distance to an obstacle in a loop and prints it into the console:
+
+```
+Distance: 252 mm (0.252 m), echo 1524 us
+```
+
+The measurement itself does not block a task: `ultrasonic_start()` only sends
+the trigger pulse, the result is printed by the main loop when the sensor
+reports it. The example is compatible with any ultrasonic module with
+`TRIGGER` and `ECHO` pins.
 
 ## Wiring
 
 | Name | Description | Defaults |
 |------|-------------|----------|
-| `CONFIG_EXAMPLE_TRIGGER_GPIO` | GPIO number connected to `TRIGGER` pin | "4" for `esp32c3`, "17" for `esp32`, `esp32s2`, and `esp32s3` |
-| `CONFIG_EXAMPLE_ECHO_GPIO` | GPIO number connected to `ECHO` pin | "5" for `esp32c3`, "16" for `esp32`, `esp32s2`, and `esp32s3` |
+| `CONFIG_EXAMPLE_TRIGGER_GPIO` | GPIO number connected to the `TRIGGER` pin | 17 |
+| `CONFIG_EXAMPLE_ECHO_GPIO` | GPIO number connected to the `ECHO` pin | 16 |
